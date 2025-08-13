@@ -1,8 +1,8 @@
-# Safecracker Pro 🔐
+# Safecrack Pro 🔐
 
 Projeto final da disciplina **Sistemas Digitais** do **Centro de Informática (CIn) - UFPE**.
 
-O **Safecracker Pro** é um sistema digital de cofre eletrônico implementado em **SystemVerilog** para FPGA, com programação e verificação de senha, bloqueio temporário após tentativas incorretas e interface via botões, switches e LEDs.
+O **Safecrack Pro** é um sistema digital de cofre eletrônico implementado em **SystemVerilog** para FPGA, com programação e verificação de senha, bloqueio temporário após tentativas incorretas e interface via botões, switches e LEDs.
 
 ## 🎯 Funcionalidades
 
@@ -12,7 +12,6 @@ O **Safecracker Pro** é um sistema digital de cofre eletrônico implementado em
 - **Indicação por LEDs**:
   - **LEDs verdes** → Cofre destravado.
   - **LEDs vermelhos** → Tentativa incorreta ou bloqueio ativo.
-- **Senha inicial de teste**: `7, 13, 13` (em decimal).
 
 ## ⚙️ Especificações Técnicas
 
@@ -54,13 +53,6 @@ Após **3 tentativas incorretas**, o sistema entra em estado de bloqueio por **1
 - **Detecção de Bordas**: Borda de descida para botões ativos-baixos.
 - **Armazenamento de Senha**: Vetor de 12 bits (3×4 bits).
 
-## 🚀 Como Rodar
-
-1. Abra o projeto no **Intel Quartus Prime**.
-2. Configure o dispositivo alvo (por exemplo, Cyclone V - DE1-SoC).
-3. Compile (`Ctrl+L`) o projeto.
-4. Carregue no FPGA.
-5. Siga a lógica de programação e teste da senha usando os botões e switches.
 
 ## 👥 Autores
 
