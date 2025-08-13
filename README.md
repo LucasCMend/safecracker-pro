@@ -15,7 +15,7 @@ O **Safecrack Pro** é um sistema digital de cofre eletrônico implementado em *
 
 ## ⚙️ Especificações Técnicas
 
-- **Plataforma**: FPGA (ex.: Altera/Intel DE1-SoC)
+- **Plataforma**: FPGA (DE2-115)
 - **Clock**: 50 MHz
 - **Linguagem**: SystemVerilog
 - **Codificação de Estados**: One-hot
