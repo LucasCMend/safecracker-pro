@@ -1,0 +1,254 @@
+module safecrackpro_beta_fsm (
+    input  logic        clk,        // Clock 50 MHz
+    input  logic        rst,        // Reset assíncrono, ativo em 1
+    input  logic [3:0]  btn,        // Botões KEY3..KEY0
+    input  logic [3:0]  sw,         // Switches (sw[0] para modo programar)
+    output logic        unlocked,   // 1 quando destravado
+    output logic [8:0]  LEDG,       // LEDs verdes
+    output logic [17:0] LEDR        // LEDs vermelhos
+);
+
+    // Estados codificados one-hot com reg para compatibilidade Quartus
+    typedef enum logic [7:0] {
+        S_IDLE      = 8'b0000_0001,
+        S_PROGRAM   = 8'b0000_0010,
+        S_WAIT_BTN  = 8'b0000_0100,
+        S_CHECK     = 8'b0000_1000,
+        S_UNLOCKED  = 8'b0001_0000,
+        S_LOCKED    = 8'b0010_0000
+    } state_t;
+
+    state_t state, next_state;
+
+    // Senha armazenada em vetor 12 bits: 3 dígitos x 4 bits cada
+    reg [11:0] passcode;
+    reg       pass_loaded;
+    reg [1:0] prog_idx;
+
+    // Tentativa atual, também 12 bits
+    reg [11:0] attempt;
+    reg [1:0]  attempt_pos;
+    reg [1:0]  attempt_count;
+
+    // Sincronização e borda dos botões
+    reg [3:0] btn_sync_0, btn_sync_1;
+    reg [3:0] btn_prev;
+    wire [3:0] btn_edge;
+
+    // Switch0 invertido para ativo-baixo
+    reg sw0_sync_0, sw0_sync_1;
+    reg sw0_prev;
+    wire sw0_falling;
+
+    // Contador de bloqueio
+    reg [28:0] lock_counter;
+    localparam int LOCK_SECONDS = 10;
+    localparam int CYCLES_PER_SEC = 50_000_000;
+    localparam int LOCK_CYCLES = LOCK_SECONDS * CYCLES_PER_SEC;
+
+    // LEDs registrados
+    reg [8:0] ledg_reg;
+    reg [17:0] ledr_reg;
+
+    // Sincroniza botões em dois estágios (flip-flops)
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            btn_sync_0 <= 4'b1111;
+            btn_sync_1 <= 4'b1111;
+            btn_prev <= 4'b1111;
+        end else begin
+            btn_sync_0 <= btn;
+            btn_sync_1 <= btn_sync_0;
+            btn_prev <= btn_sync_1;
+        end
+    end
+
+    // Borda de descida (1->0) nos botões (ativo baixo)
+    assign btn_edge = btn_prev & ~btn_sync_1;
+
+    // Sincroniza switch0 em dois estágios e inverte para ativo baixo
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            sw0_sync_0 <= 1'b0;
+            sw0_sync_1 <= 1'b0;
+            sw0_prev <= 1'b0;
+        end else begin
+            sw0_sync_0 <= ~sw[0];
+            sw0_sync_1 <= sw0_sync_0;
+            sw0_prev <= sw0_sync_1;
+        end
+    end
+
+    // Detecta transição de switch de ligado para desligado (1->0)
+    assign sw0_falling = (sw0_prev == 1'b1) && (sw0_sync_1 == 1'b0);
+
+    // Atualização do estado
+    always @(posedge clk or posedge rst) begin
+        if (rst)
+            state <= S_IDLE;
+        else
+            state <= next_state;
+    end
+
+    // Próximo estado
+    always @(*) begin
+        case (state)
+            S_IDLE: begin
+                if (sw0_sync_1 == 1'b1)       // Switch ligado? Programar
+                    next_state = S_PROGRAM;
+                else if (pass_loaded == 1'b0) // Senha não carregada, forçar programar
+                    next_state = S_PROGRAM;
+                else
+                    next_state = S_WAIT_BTN;
+            end
+
+            S_PROGRAM: begin
+                if (sw0_sync_1 == 1'b1)
+                    next_state = S_PROGRAM;
+                else
+                    next_state = S_IDLE;
+            end
+
+            S_WAIT_BTN: begin
+                if (attempt_count >= 3)
+                    next_state = S_LOCKED;
+                else if (unlocked)
+                    next_state = S_UNLOCKED;
+                else
+                    next_state = S_WAIT_BTN;
+            end
+
+            S_UNLOCKED: begin
+                if (sw0_sync_1 == 1'b1)
+                    next_state = S_PROGRAM;
+                else
+                    next_state = S_UNLOCKED;
+            end
+
+            S_LOCKED: begin
+                if (lock_counter >= LOCK_CYCLES)
+                    next_state = S_IDLE;
+                else
+                    next_state = S_LOCKED;
+            end
+
+            default:
+                next_state = S_IDLE;
+        endcase
+    end
+
+    // Lógica sequencial principal
+    integer i;
+    reg [3:0] pressed_btn;
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            passcode <= 12'h777_ddd; // senha inicial exemplo (7,13,13)
+            pass_loaded <= 1'b0;
+            prog_idx <= 2'd0;
+            attempt <= 12'hfff;
+            attempt_pos <= 2'd0;
+            attempt_count <= 2'd0;
+            lock_counter <= 29'd0;
+            unlocked <= 1'b0;
+            ledg_reg <= 9'd0;
+            ledr_reg <= 18'd0;
+        end else begin
+            ledg_reg <= 9'd0;
+            ledr_reg <= 18'd0;
+
+            case (state)
+                S_PROGRAM: begin
+                    // Grava botão pressionado para programação da senha
+                    if (|btn_edge) begin
+                        // Detecta qual botão foi pressionado (prioridade do MSB)
+                        for (i=3; i>=0; i=i-1) begin
+                            if (btn_edge[i]) begin
+                                pressed_btn = (4'd1 << i);
+                                // Armazena no vetor 12 bits na posição correta
+                                case (prog_idx)
+                                    2'd0: passcode[11:8] <= pressed_btn;
+                                    2'd1: passcode[7:4]  <= pressed_btn;
+                                    2'd2: passcode[3:0]  <= pressed_btn;
+                                endcase
+                                prog_idx <= prog_idx + 1;
+                            end
+                        end
+                    end
+
+                    // Ao desligar switch, salva senha
+                    if (sw0_falling) begin
+                        pass_loaded <= 1'b1;
+                        prog_idx <= 2'd0;
+                        attempt_pos <= 2'd0;
+                        attempt_count <= 2'd0;
+                        unlocked <= 1'b0;
+                    end
+                end
+
+                S_WAIT_BTN: begin
+                    if (|btn_edge && pass_loaded) begin
+                        // Detecta botão pressionado
+                        for (i=3; i>=0; i=i-1) begin
+                            if (btn_edge[i]) begin
+                                pressed_btn = (4'd1 << i);
+                                // Armazena tentativa no vetor 12 bits
+                                case (attempt_pos)
+                                    2'd0: attempt[11:8] <= pressed_btn;
+                                    2'd1: attempt[7:4]  <= pressed_btn;
+                                    2'd2: attempt[3:0]  <= pressed_btn;
+                                endcase
+                                attempt_pos <= attempt_pos + 1;
+                            end
+                        end
+                    end
+
+                    // Verifica senha quando 3 dígitos digitados
+                    if (attempt_pos == 2'd3) begin
+                        if (attempt == passcode) begin
+                            unlocked <= 1'b1;
+                            ledg_reg <= 9'b111111111; // LEDs verdes acesos
+                            ledr_reg <= 18'd0;
+                            attempt_count <= 2'd0;
+                        end else begin
+                            attempt_count <= attempt_count + 1;
+                            attempt_pos <= 2'd0;
+                            ledg_reg <= 9'd0;
+                            // metade vermelhos
+                            ledr_reg[8:0] <= 9'h1FF;
+                            ledr_reg[17:9] <= 9'd0;
+                            unlocked <= 1'b0;
+                        end
+                    end
+                end
+
+                S_UNLOCKED: begin
+                    unlocked <= 1'b1;
+                    ledg_reg <= 9'b111111111; // LEDs verdes acesos
+                    ledr_reg <= 18'd0;
+                end
+
+                S_LOCKED: begin
+                    if (lock_counter < LOCK_CYCLES)
+                        lock_counter <= lock_counter + 1;
+                    ledr_reg <= 18'h3FFFF; // LEDs vermelhos todos acesos
+                    ledg_reg <= 9'd0;
+                    unlocked <= 1'b0;
+                end
+
+                default: begin
+                    attempt_pos <= 2'd0;
+                    unlocked <= 1'b0;
+                    ledg_reg <= 9'd0;
+                    ledr_reg <= 18'd0;
+                    attempt_count <= attempt_count;
+                    lock_counter <= 29'd0;
+                end
+            endcase
+        end
+    end
+
+    // Saídas LEDs
+    assign LEDG = ledg_reg;
+    assign LEDR = ledr_reg;
+
+endmodule
